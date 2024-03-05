@@ -1,0 +1,386 @@
+---
+title: "Strategic Targeting of OncomiRs in Brain Tumor Therapy: A Gene Expression Analysis Approach"
+author: "Mersad Abbasi"
+date: "20-03-2023"
+output: 
+  html_document :
+    toc: True
+    toc_depth: 3
+bibliography: ref.bib
+    
+---
+
+# Required Packages
+[@morgan2022]
+[@zhu2008]
+[@robinson2010]
+```{r, message=FALSE, warning=FALSE}
+if (!requireNamespace("BiocManager", quietly = TRUE))
+install.packages("BiocManager")
+
+if (!requireNamespace("GEOmetadb", quietly = TRUE))
+BiocManager::install("GEOmetadb")
+if (!requireNamespace("edgeR"))
+    install.packages("edgeR", quietly=TRUE)
+
+
+#edgeR package was not avaialabe at CRAN so I tried bioconductor instead
+if (!require("BiocManager", quietly = TRUE))
+    install.packages("BiocManager")
+
+BiocManager::install("edgeR")
+```
+
+
+# Load Required Packages
+```{r,warning=FALSE,message=FALSE}
+
+library(GEOmetadb)
+library(BiocManager)
+library(knitr)
+library(edgeR)
+library(dplyr)
+library(kableExtra)
+library(biomaRt)
+
+
+```
+### INTRODUCTION
+
+# Article Title: Anti-seed PNAs targeting multiple oncomiRs for brain tumor therapy[@wang2023anti], 
+
+# Importance : 
+Brain tumors represent a critical medical challenge due to their high lethality. This research explores the modulation of a complex gene network by two microRNAs (miRNAs) and examines the effects of targeting these miRNAs on gene expression. Additionally, it highlights the potential of using short (8-mer) γ-modified peptide nucleic acids (PNAs) as an indirect method to modify gene expression, offering promising avenues for future gene therapy.
+
+# Conclusion: 
+Our findings indicate that bioengineered nanoparticle systems (BNPs) carrying anti-seed γ-modified peptide nucleic acids (sγPNAs) targeting various oncogenic microRNAs (oncomiRs) offer a viable strategy for enhancing glioblastoma multiforme (GBM) therapy. This approach also holds the potential for tailoring treatments to individual patients by targeting tumor-specific oncomiRs[@wang2023anti]
+
+
+### FETCHING THE DATASET : GSE217366
+```{r, message=FALSE, warning=FALSE}
+gse <- getGEO("GSE217366",GSEMatrix=FALSE)
+sfiles = getGEOSuppFiles('GSE217366')
+fnames = rownames(sfiles)
+ExpDataset = read.delim(fnames[1],header=TRUE,
+check.names = FALSE) 
+#we need to set check.names to false in order to avoid changing of col names if there are special characters in col names. We ensure this way that we don't lose information associated with our data
+
+
+#number of genes in our dataset
+dim(ExpDataset)
+```
+### DATA CLEANING
+
+
+
+## Define Groups :
+There are 2 groups in our study : Condition and Replicate. The last character in our sample names indicate the replicate number. 
+```{r,} 
+#Split our sample names in 2 by splitting on the last character.
+SamplesInfo <- data.frame(lapply(colnames(ExpDataset)[2:13], 
+                                  FUN=function(x){unlist(strsplit(x, "(?<=.)(?=[^.]$)", perl=TRUE))[c(1,2)]}))
+
+#Name the two new groups as Condition and Replicate
+colnames(SamplesInfo) <- colnames(ExpDataset)[2:13]
+rownames(SamplesInfo) <- c("Condition", "replicate")
+
+#Transform our data set into data frame
+SamplesInfo <- data.frame(t(SamplesInfo))
+
+#Visualize the two new groups and assignmed sample names
+SamplesInfo
+```
+
+## Check For Duplication
+```{r,}
+#to find duplicated genes we need to create summary of genes table
+summarized_gene_counts <- sort(table(ExpDataset$gene_name),
+decreasing = TRUE)
+kable(summarized_gene_counts[which(summarized_gene_counts>1)[1:10]],)
+```
+
+## Remove Low Count Genes
+```{r}
+#to filter out noise meaning low count genes translate out counts into counts per million using the edgeR package function cpm
+
+cpms = cpm(ExpDataset[,2:13])
+rownames(cpms) <- ExpDataset[,1]
+
+# get rid of low counts
+keep = rowSums(cpms >1) >=3
+ExpDataset_filtered = ExpDataset[keep,]
+```
+
+
+```{r,}
+#Did we manage to reduce gene duplication?
+dim(ExpDataset_filtered)
+dim(ExpDataset)
+
+
+summarized_gene_counts_filtered <- sort(table(ExpDataset_filtered$gene_name),
+decreasing = TRUE)
+kable(summarized_gene_counts_filtered[
+which(summarized_gene_counts_filtered>1)[1:10]], format = "html")
+
+#we got rid of almost all of the gene duplications except in 3 genes named : AHRR, HSPA14 and TBCE
+```
+
+
+### NORMALIZATION 
+```{r, warning=FALSE}
+#First, we visualize our data in boxplot
+data2plot <- log2(cpm(ExpDataset_filtered[,2:13]))
+boxplot(data2plot, xlab = "Samples", ylab = "log2 CPM",
+las = 2, cex = 0.5, cex.lab = 0.5,
+cex.axis = 0.5, main = "U87 cells Treated with BNP")
+
+#draw the median on each box plot
+abline(h = median(apply(data2plot, 2, median)),
+col = "green", lwd = 0.6, lty = "dashed")
+```
+ 
+```{r,}
+#Next, we draw a density plot
+counts_density <- apply(log2(cpm(ExpDataset_filtered[,2:13])),
+2, density)
+
+#calculate the limits across all the samples
+xlim <- 0; ylim <- 0
+for (i in 1:length(counts_density)) {
+xlim <- range(c(xlim, counts_density[[i]]$x));
+ylim <- range(c(ylim, counts_density[[i]]$y))
+}
+cols <- rainbow(length(counts_density))
+ltys <- rep(1, length(counts_density))
+
+#plot the first density plot to initialize the plot
+plot(counts_density[[1]], xlim=xlim, ylim=ylim, type="n",
+ylab="Smoothing density of log2-CPM",
+main="Expression Density Plot", cex.lab = 0.85,)
+
+#plot each line
+for (i in 1:length(counts_density))
+lines(counts_density[[i]], col=cols[i], lty=ltys[i])
+
+#create legend
+legend("topright", colnames(data2plot),
+col=cols, lty=ltys, cex=0.75,
+border ="blue", text.col = "green4",
+merge = TRUE, bg = "gray90")
+```
+
+## Normalization by TMM
+```{r}
+filtered_data_matrix <- as.matrix(ExpDataset_filtered[,2:13])
+rownames(filtered_data_matrix) <- ExpDataset_filtered$geneID
+d = DGEList(counts=filtered_data_matrix, group = SamplesInfo$Condition)
+
+d = calcNormFactors(d)
+#get the normalized data
+normalized_counts <- cpm(d)
+```
+
+# Compare normalized and pre-normalized data :
+```{r, warning=FALSE}
+# pre-normalized Density Plot
+counts_density <- apply(log2(cpm(ExpDataset_filtered[,2:13])),
+2, density)
+#calculate the limits across all the samples
+xlim <- 0; ylim <- 0
+for (i in 1:length(counts_density)) {
+xlim <- range(c(xlim, counts_density[[i]]$x));
+ylim <- range(c(ylim, counts_density[[i]]$y))
+}
+cols <- rainbow(length(counts_density))
+ltys <- rep(1, length(counts_density))
+
+plot(counts_density[[1]], xlim=xlim, ylim=ylim, type="n",
+ylab="Smoothing density of log2-CPM",
+main="Pre-Normalized Density Plot", cex.lab = 0.85)
+#plot each line
+for (i in 1:length(counts_density))
+lines(counts_density[[i]], col=cols[i], lty=ltys[i])
+#create legend
+legend("topright", colnames(data2plot),
+col=cols, lty=ltys, cex=0.75,
+border ="blue", text.col = "green4",
+merge = TRUE, bg = "gray90")
+
+
+
+
+# normalized Density Plot
+normalized_counts_density <- apply(log2(cpm(d)),
+2, density)
+#calculate the limits across all the samples
+xlim <- 0; ylim <- 0
+for (i in 1:length(normalized_counts_density)) {
+xlim <- range(c(xlim, normalized_counts_density[[i]]$x));
+ylim <- range(c(ylim, normalized_counts_density[[i]]$y))
+}
+cols <- rainbow(length(normalized_counts_density))
+ltys <- rep(1, length(normalized_counts_density))
+
+plot(normalized_counts_density[[1]], xlim=xlim, ylim=ylim, type="n",
+ylab="Smoothing density of log2-CPM",
+main="Normalized Density Plot", cex.lab = 0.85)
+#plot each line
+for (i in 1:length(normalized_counts_density))
+lines(normalized_counts_density[[i]], col=cols[i], lty=ltys[i])
+#create legend
+legend("topright", colnames(data2plot),
+col=cols, lty=ltys, cex=0.75,
+border ="blue", text.col = "green4",
+merge = TRUE, bg = "gray90")
+
+
+
+# Pre-Normalized Boxplot
+data2plot <- log2(cpm(ExpDataset_filtered[,2:13]))
+boxplot(data2plot, xlab = "Samples", ylab = "log2 CPM",
+las = 2, cex = 0.5, cex.lab = 0.5,
+cex.axis = 0.5, main = "boxplot before normalization")
+#draw the median on each box plot
+abline(h = median(apply(data2plot, 2, median)),
+col = "green", lwd = 0.6, lty = "dashed")
+
+
+
+# Normalized Boxplot
+data2plot <- log2(cpm(d))
+boxplot(data2plot, xlab = "Samples", ylab = "log2 CPM",
+las = 2, cex = 0.5, cex.lab = 0.5,
+cex.axis = 0.5, main = "Boxplot after normalization")
+#draw the median on each box plot
+abline(h = median(apply(data2plot, 2, median)),
+col = "green", lwd = 0.6, lty = "dashed")
+
+#Result : TMM Normalization did not significantly change our data set but reduced noise to some degree
+
+```
+
+
+
+
+
+```{r, after normalization }
+plotMDS(d, labels=rownames(SamplesInfo),
+col = c("darkgreen","blue","red"),main = "MDS plot after normalization")
+
+#we can see that samples are not clustered together. NICE!, we can use condition as the only factor affecting expression. WE are comparing A to B and clearly our samples our very different from each other
+```
+
+
+```{r, before normalization}
+plotMDS(cpm(ExpDataset_filtered[,2:13]), labels=rownames(SamplesInfo),
+col = c("darkgreen","blue","red"),main = "MDS plot before normalization")
+
+#Comparing MDS plot before and after normalization shows us that normalization was successful in reducing the clustering of our data
+```
+
+
+### DISPERSION :
+```{r,}
+#estimate common and tagwise dispersion
+model_design <- model.matrix(~SamplesInfo$Condition
++ SamplesInfo$replicate+0)
+d <- estimateDisp(d, model_design)
+
+#Now let's graph BCV
+plotBCV(d,col.tagwise = "black",col.common = "red",)
+
+#AS expected we can see that dispersion decreases with increasing CPM
+
+```
+```{r,}
+#we can also visualize this phenomenon by plotting Mean vs. Variance
+plotMeanVar(d, show.raw.vars = TRUE, show.tagwise.vars=TRUE,
+show.ave.raw.vars = TRUE,
+NBline=TRUE,
+show.binned.common.disp.vars = TRUE)
+```
+### MAPPING
+```{r,}
+ensembl <- useMart("ensembl")
+#List ensembl dataset and define it as dataset
+datasets <- listDatasets(ensembl)
+ensembl = useDataset("hsapiens_gene_ensembl",mart=ensembl)
+```
+
+
+```{r,}
+#Look for ensembl gene_id associated with human
+biomart_human_filters <- listFilters(ensembl)
+kable(biomart_human_filters[
+grep(biomart_human_filters$name,pattern="ensembl"),],
+format="html") %>%
+row_spec(1, background = "yellow")
+#Look for HUGO gene symbol
+kable(searchAttributes(mart = ensembl, 'hgnc') , format="html")%>%
+row_spec(2, background = "yellow")
+```
+
+
+```{r}
+#Now that we have found the correct attributes, which are "ensembl_gene_id" And "hgnc_symbol", we map the geneID to HGCN symbol
+conversion_stash <- "ca125_id_conversion.rds"
+if(file.exists(conversion_stash)){
+ca125_id_conversion <- readRDS(conversion_stash)
+} else {
+ca125_id_conversion <- getBM(attributes = c("ensembl_gene_id","hgnc_symbol"),
+                            filters = c("ensembl_gene_id"),
+                            values = ExpDataset_filtered$geneID,
+                            mart = ensembl)
+saveRDS(ca125_id_conversion, conversion_stash)
+}
+```
+
+```{r}
+#Total number of geneslost after mapping
+nrow(normalized_counts) - nrow(ca125_id_conversion)
+
+#we have lost only 41 genes when mapping
+```
+
+
+```{r, echo=FALSE,}
+#Next, we merge our new identifiers
+normalized_counts_annot <- merge(ca125_id_conversion,normalized_counts, by.x = 1, by.y = 0, all.y = TRUE)
+
+#And we can visualize part of the results as a table
+kable(normalized_counts_annot[1:5,1:5],type = "html")
+
+#To calculate number of missing identifiers I calculate which one of our normalized counts does not have a HGNC symbol.
+ensembl_id_missing_gene <- normalized_counts_annot$ensembl_gene_id[
+which(is.na(normalized_counts_annot$hgnc_symbol))]
+length(ensembl_id_missing_gene)
+```
+
+```{r,}
+#Let's take a look at the missing genes that were not mapped to these new identifiers
+old_mapping <- merge(ExpDataset[,1:14],data.frame(ensembl_id_missing_gene), all.y = TRUE, by.x = 1, by.y = 1)
+kable(old_mapping, type="html")
+```
+
+### INTERPRETATION
+
+# DataSet : 
+The controls are defined as Control1,Control2 and Control3 which reflect the three replicates of U87 cells as our control group. The test conditions are U87 cells that have been treated with BNP containing sgPNA-10b
+or sgPNA-21 or combination of BNP loaded with sgPNA-21 and sgPNA-10b for 72 hours. These test conditions are defined as PNA10b, PNA21 and PNA10b+21 and each have 3 replicates. The data set is composed of : 35741 samples with unique identifier that are Either Control (with 3 replicates) or Test (PNA10b,PNA21,PNA10b+21) each with 3 replicates 
+
+
+
+
+# Data Cleaning
+There were many gene_ID duplication in our data set. Upon eliminating duplications, only three genes—AHRR, HSPA14, and TBCE—exhibited duplication events. Given the limited number of duplications, the project can proceed without further adjustment.
+
+A total of 42 expression values were not mapped to HUGO symbols, and a comprehensive list of these values has been provided. Following the exclusion of genes with low counts, 21,344 genes were eliminated. Notably, some outliers were not depicted in the box plots presented in this report.
+
+
+Each condition was represented by three independent replicates. Analysis of the MDS plot revealed that samples sharing the same conditions clustered together, indicating consistent replicate behavior across conditions.
+`
+
+```
+
+```{r}
