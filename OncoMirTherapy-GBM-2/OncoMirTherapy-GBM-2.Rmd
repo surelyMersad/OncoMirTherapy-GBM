@@ -1,0 +1,465 @@
+---
+title: "Strategic Targeting of OncomiRs in Brain Tumor Therapy: A Gene Expression Analysis Approach"
+author: "Mersad Abbasi"
+date: "20-03-2023"
+output:
+  html_document:
+    toc: True
+    toc_depth: 3
+    df_print: paged
+bibiliography: ref.bib
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Required Packages 
+[@morgan2022]
+[@zhu2008]
+[@robinson2010]
+```{r, warning=FALSE, message=FALSE}
+if (!requireNamespace("devtools", quietly = TRUE))
+install.packages("devtools")
+if (!requireNamespace("ComplexHeatmap", quietly = TRUE))
+install.packages("ComplexHeatmap")
+if (!requireNamespace("circlize", quietly = TRUE))
+install.packages("magick")
+if (!requireNamespace("magick", quietly = TRUE))
+install.packages("magick")
+if (!requireNamespace("gprofiler2", quietly = TRUE))
+install.packages("gprofiler2")
+```
+
+
+```{r, warning=FALSE, message=FALSE}
+## Load Required Packages
+library(ComplexHeatmap)
+library(circlize)
+library(knitr)
+library(limma)
+library(edgeR)
+library(ggplot2)
+library(magick)
+library(gprofiler2)
+
+
+```
+
+# INTRODUCTION
+
+### Article Title:
+Anti-seed PNAs targeting multiple oncomiRs for brain tumor therapy[@wang2023anti], 
+
+### Conclusion: 
+We established that BNPs loaded with anti-seed sγPNAs targeting multiple oncomiRs are a promising approach to improve the treatment of GBM, with a potential to personalize treatment based on tumor-specific oncomiRs [@wang2023anti].
+
+### Dataset: 
+Our data set was obtained from GEO with the accession id : GSE217366. It was obtained from the article "Anti-seed PNAs targeting multiple oncomiRs for brain tumor therapy" [@wang2023anti]
+
+### Summary of previous analysis
+Previously we cleaned, normalized and mapped our dataset to HUGO symbols. The results of these analysis are summarized as follows : 
+                        Cleaning: (we got rid of gene duplications and defined new groups for our samples) 21344 of the initial 35741 samples remained after removing gene duplications
+                        
+                        Normalization: (We normalized our data by TMM) No outliers were removed after normalization
+                        
+                        Mapping: (we mapped our samples gene_id that contained the ensembl id to HUGO symbol), A total of 42 genes were not mapped to HUGO symbol. The list of these genes with their expression data were displayed at the end of Assignment 1
+                        
+# IMPORT DATA
+```{r}
+# load the data
+ExpDataset <- read.csv(file=file.path(getwd(),
+                "dataset.csv"),
+                                    header = TRUE,sep = ",",
+                                    stringsAsFactors = FALSE,
+                                    check.names=FALSE, row.names = NULL)
+# Only include unique hgnc_symbols
+ExpDataset <-ExpDataset[match(
+  unique(ExpDataset$hgnc_symbol), 
+  ExpDataset$hgnc_symbol), ]
+kable(ExpDataset[1:5,], caption = "Loaded dataset", type="html")
+# Get rid of duplicated Ensembel_gene_ids
+ExpDataset <- ExpDataset[!duplicated(ExpDataset$ensembl_gene_id), ]
+```
+
+# DIFFERENTIAL EXPRESSION ANALYSIS
+For designing our model, we will be using the EdgeR package.
+Since we are using an experiment where the control and the treatment were both performed on U87 cells, we will use the QuasiLikelihood model in edgeR package
+
+
+## Define Groups 
+There are 2 groups in our study : Condition and Replicate. The last character in our sample names indicate the replicate number. 
+```{r}
+# Split our sample names in 2 by splitting on the last character.
+SamplesInfo <- data.frame(lapply(colnames(ExpDataset)[3:14], 
+                                  FUN=function(x){unlist(strsplit(x, "(?<=.)(?=[^.]$)", perl=TRUE))[c(1,2)]}))
+
+# Name the two new groups as Condition and Replicate
+colnames(SamplesInfo) <- colnames(ExpDataset)[3:14]
+rownames(SamplesInfo) <- c("condition", "replicate")
+
+# Transform our data set into data frame
+SamplesInfo <- data.frame(t(SamplesInfo))
+
+# Visualize the two new groups and assignmed sample names
+kable(SamplesInfo, type="html", caption = "Table 1. Defined groups for our dataset")
+```
+## Design Matrix
+Based on the MDS plot in assignment 1, we concluded that condition of the samples (control or PNA10b+21) was the major factor contributing to the results. Considering the fact that our experiment is performed on cell line U87, this conclusion is logical.
+```{r}
+# Design our model matrix
+condition <- factor(c(rep("control", 3), rep("PNA10b-21", 3)))
+design_matrix <- model.matrix(~1 + condition)
+colnames(design_matrix) <- levels(condition)
+```
+
+
+
+### Define edgeR DEGlist
+For further analysis with edgeR package, we first need to create the DEGlist object. It should be noted that we only are going to compare only two conditions : Control (with 3 replicates) and PNA10b+21 (with 3 replicates). This is because the main hypothesis of the paper was that combined use of PNA10b and PNA21 will yield signifcant results.
+```{r,fig.cap="Figure 1. MeanVariance plot for our expression dataset.We can see that our data follow a negative binomial distribution and thus we can contiue with our analysis" }
+d <- DGEList(counts=ExpDataset[,c(3:5,12:14)], genes =ExpDataset[,1:2])
+# Get the normalized data
+d = calcNormFactors(d)
+# Estimate dispersion
+d <- estimateDisp(d, design_matrix)
+
+# check to see if our data follows a non binomial distribution
+plotMeanVar(d,
+            show.raw.vars = TRUE,
+            show.tagwise.vars = TRUE,
+            NBline = TRUE,
+            show.ave.raw.vars = TRUE,
+            show.binned.common.disp.vars = TRUE,
+            main = "Mean-Variance plot")
+legend("topleft", 
+       legend=c("Raw Data", "Tagwise Dispersion", "Average Raw Variances", 
+                "Binned Common Dispersion", "Negative Binomial Line"), 
+       col = c("grey", "lightblue", "maroon", "red", "dodgerblue2"), 
+       pch=c(1,1,4,4,NA), 
+       lty=c(0,0,0,0,1), 
+       lwd=c(1,1,1,1,2), 
+       cex=0.5)
+```
+
+
+
+## Fit The Model
+As described earlier we fit our data to the QuasiLikelihood model in edgeR package that is specifically designed for RNAseq data
+```{r}
+fit <- glmQLFit(d, design_matrix)
+```
+
+
+
+## Perform differential expression analysis
+We chose 0.05 as the threshold for our analysis by convention. We also chose the Benjamini-Hochberg method to adjust the p-value as our sample is too large.
+```{r}
+qlf <- glmQLFTest(fit)
+# View the result
+res <- topTags(qlf, n=nrow(d), row.names(FALSE))
+kable(res[1:10,1:7], digits = 80, caption = "Table 2. DEG analysis using glmQLFTest. The first 10 rows are shown")
+
+# Get all of the results sorted by P-value
+qlf_output_hits <- topTags(qlf,sort.by = "PValue",
+n = nrow(ExpDataset))
+
+
+
+
+# Extract the number of samples that passed the p-value = 0.05 threshold
+length(which(qlf_output_hits$table$PValue < 0.01))
+
+# Extract the number of samples that passed the BH correction
+length(which(qlf_output_hits$table$FDR < 0.01))
+```
+Interestingly, the number of genes that passed the correction is 439 and the number of genes that were significant without the correction is 952. 
+
+# VISUALIZATION
+
+Here we will visualize our DE analysis using volcano plot and heatmap
+
+## Volcano plot
+```{r, fig.cap="Figure 2. Volcano plot of our data after Quasilikelihood analysis. The vertical lines seperates genes which have abs Log2FC > 1.5"}
+
+# Extract p-values as a vector
+
+p.value <- p.adjust(qlf$table$PValue, method = "BH")
+
+
+# Extract LogFC for significant genes
+logFC <- qlf$coefficients[, 2]
+
+# Combining logFC and p.value into a data frame
+df <- data.frame(logFC=logFC, p.value=-log10(p.value))
+
+# Create volcano plot using ggplot
+ggplot(df, aes(x=logFC, y=p.value, color=-log10(p.value))) +
+  geom_point(size=2, alpha=0.5) +
+  scale_color_gradient(low="green", high="red") +
+  labs(x="Log2 Fold Change", y="-log10(p-value)", title="Volcano Plot") +
+  theme_bw() + geom_vline(xintercept = c(-1.5,1.5), linetype="dashed", color="blue")
+  geom_hline(yintercept = -log10(0.01), linetype="dashed", color="blue")
+```
+The volcano plot shows that the range of logFC is -2.65 to 2.44.There is also a gray line on the bottom of the figure, which represents genes that have not passed the adjested significance level. The vertical line seperates genes which have abs Log2FC > 1.5 
+
+## Heatmap
+```{r, warning=FALSE, fig.cap="Figure 3. Heatmap of our PNA10b+21 treatment groups compared to control. Notice the clustering of similar groups"}
+# Create a heatmap matrix
+heatmap_matrix <- ExpDataset[,
+3:ncol(ExpDataset)]
+rownames(heatmap_matrix) <- ExpDataset$ensembl_gene_id
+colnames(heatmap_matrix) <- colnames(ExpDataset[,
+3:ncol(ExpDataset)])
+
+# Row-normalization
+heatmap_matrix <- t(scale(t(heatmap_matrix)))
+
+# Create heatmap
+
+if(min(heatmap_matrix) == 0){
+heatmap_col = colorRamp2(c( 0, max(heatmap_matrix)),
+c( "white", "red"))
+} else {
+heatmap_col = colorRamp2(c(min(heatmap_matrix), 0,
+max(heatmap_matrix)), c("blue", "white", "red"))
+}
+current_heatmap <- Heatmap(as.matrix(heatmap_matrix),
+show_row_dend = FALSE,show_column_dend = TRUE,
+col=heatmap_col,show_column_names = TRUE,
+show_row_names = FALSE,show_heatmap_legend = TRUE, use_raster=FALSE)
+current_heatmap
+```
+The heatmap dispays clear distinction of blocks of genes that have different expressions in the control and the treatment group. As expected our conditions were clustered together. This means that we succesfully identified the most important factor in explaining the results which is the condition type.
+
+
+
+# THRESHOLDED ORA
+
+## Find upregulated and downregulated genes
+```{r}
+# Number of genes that were upregulated
+length(which(qlf_output_hits$table$PValue < 0.01
+& qlf_output_hits$table$logFC > 0))
+# Number of genes that were downregulated
+length(which(qlf_output_hits$table$PValue < 0.05
+& qlf_output_hits$table$logFC < 0))
+```
+
+```{r}
+# Merge gene names with the top hits
+qlf_output_hits_withgn <- merge(ExpDataset[,1:2],qlf_output_hits, by.x=1, by.y = 1)
+
+# Define upregulated genes and downregulated genes
+upregulated_genes <- qlf_output_hits_withgn$hgnc_symbol.x[
+which(qlf_output_hits_withgn$PValue < 0.01
+& qlf_output_hits_withgn$logFC > 0)]
+downregulated_genes <- qlf_output_hits_withgn$hgnc_symbol.x[
+which(qlf_output_hits_withgn$PValue < 0.01
+& qlf_output_hits_withgn$logFC < 0)]
+
+# Export Downregulated and Upregulated genes for future analysis
+write.table(x=upregulated_genes,
+            file=file.path("upregulated_genes.txt"),sep = "\t",
+            row.names = FALSE,col.names = FALSE,quote = FALSE)
+write.table(x=downregulated_genes,
+            file=file.path("downregulated_genes.txt"),sep = "\t",
+            row.names = FALSE,col.names = FALSE,quote = FALSE)
+
+```
+
+## Find associated pathways 
+I used gprofiler2 package for thresholded ORA
+
+### UP-regulated genes
+```{r}
+# Find pathways associated with the upregulated genes using gprofiler2
+UPpathways <- gost(upregulated_genes,
+                       organism = "hsapiens",
+                       sources = c("GO:BP", "REAC", "WP"),
+                       significant = TRUE,
+                       user_threshold = 0.01,
+                       exclude_iea = TRUE,
+                       correction_method = "fdr")
+# Limit term size
+UPpathways <- data.frame(
+  term_name = UPpathways$result$term_name[UPpathways$result$term_size < 200 &
+                                               UPpathways$result$term_size > 1],
+  term_id = UPpathways$result$term_id[UPpathways$result$term_size < 200 &
+                                           UPpathways$result$term_size > 1],
+  source = UPpathways$result$source[UPpathways$result$term_size < 200 &
+                                         UPpathways$result$term_size > 1])
+# Number of total genesets
+length(UPpathways$term_name)
+
+# Print the pathways
+kable(head(UPpathways, 5), format = "html", caption = "Table 3. Top 5 pathways associated with our upregulated genes")
+
+
+```
+
+
+Upregulated pathways are shown above, which include pathways associated with cell division and cell cycle.
+
+## Down-Regulated genes
+```{r}
+# Find pathways associated with the downregulated genes using gprofiler2
+DOWNpathways <- gost(downregulated_genes,
+                       organism = "hsapiens",
+                       sources = c("GO:BP", "REAC", "WP"),
+                       significant = TRUE,
+                       user_threshold = 0.01,
+                       exclude_iea = TRUE,
+                       correction_method = "fdr")
+# Limit term size
+DOWNpathways <- data.frame(
+  term_name = DOWNpathways$result$term_name[DOWNpathways$result$term_size < 200 &
+                                               DOWNpathways$result$term_size > 1],
+  term_id = DOWNpathways$result$term_id[DOWNpathways$result$term_size < 200 &
+                                           DOWNpathways$result$term_size > 1],
+  source = DOWNpathways$result$source[DOWNpathways$result$term_size < 200 &
+                                         DOWNpathways$result$term_size > 1])
+# Number of total genesets
+length(DOWNpathways$term_name)
+
+# Print the pathways
+kable(head(DOWNpathways, 5), format = "html", caption = "Table 4. Top 5 pathways associated with our downregulated genes")
+```
+
+
+Downregulted pathways are shown above, which include pathways associated with response to hypoxia
+
+## ALL Genes
+```{r}
+# Find pathways associated with all genes using gprofiler2
+ALLgenes <- qlf_output_hits_withgn$hgnc_symbol.x[
+which(qlf_output_hits_withgn$PValue < 0.01)]
+ALLpathways <- gost(ALLgenes,
+                       organism = "hsapiens",
+                       sources = c("GO:BP", "REAC", "WP"),
+                       significant = TRUE,
+                       user_threshold = 0.01,
+                       exclude_iea = TRUE,
+                       correction_method = "fdr")
+# Limit term size
+ALLpathways <- data.frame(
+  term_name = ALLpathways$result$term_name[ALLpathways$result$term_size < 200 &
+                                               ALLpathways$result$term_size > 1],
+  term_id = ALLpathways$result$term_id[ALLpathways$result$term_size < 200 &
+                                           ALLpathways$result$term_size > 1],
+  source = ALLpathways$result$source[ALLpathways$result$term_size < 200 &
+                                         ALLpathways$result$term_size > 1])
+# Number of total genesets
+length(ALLpathways$term_name)
+
+# Print the pathways
+kable(head(ALLpathways, 5), format = "html", caption = "Table 5. Top 5 pathways associated with the whole gene list")
+```
+
+# DISCUSSION
+
+
+
+## Differential Gene Expression
+
+### Statistical Analysis
+952 genes were significantly differentially expressed. When I correct by BH method the number of significant genes changed to 439. At first I used 0.05 as threshold by convention. But since too many genes passed the correction, I changed the p-value to 0.01
+
+I used Benjamini-Hochberg (BH) correction method. This method is ideal for correction of pvalues by controling the false discovery rate (FDR). False discovery rates include the number of times we reject the hypothesis by mistake. As the number of samples increases FDR also increases. So considering the large sample size that we worked with, BH correction is ideal. As noted in previous question the number of genes that passed correction was equal to the initial number of genes before correction (439). This method is also a great method to correct multiple hypothesis testing which is what we conducted.
+
+### Plots
+The volcano plot has been provided, showing the highly significant genes that were downregulated or upregulated in the treatment group
+
+The most upregulated gene was : NAP1L4
+```{r}
+# sort the logFC in decreasing order
+sorted_logFC <- sort(logFC, decreasing=TRUE)
+
+# get the index of the most upregulated gene
+most_upregulated <- which(logFC == sorted_logFC[1])
+
+# get the hgnc symbol of the most upregulated gene
+most_upregulated_gene <- ExpDataset[most_upregulated, 2] 
+most_upregulated_gene
+
+
+# Subset the dataset to extract expression levels of the gene of interest
+gene_exp <- subset(ExpDataset, ExpDataset[,2] == "NAP1L4")
+
+# Extract the expression values
+gene_exp_values <- gene_exp[, -c(1:2)]
+kable(gene_exp_values, type="html", caption = "Table 6. Expression values for the most upregulated gene (NAP1L4)")
+```
+
+The most downregulated gene was : CISD3
+```{r}
+# sort the logFC in decreasing order
+sorted_logFC <- sort(logFC, decreasing=FALSE)
+
+# get the index of the most upregulated gene
+most_downregulated <- which(logFC == sorted_logFC[1])
+
+# get the hgnc symbol of the most downregulated gene
+most_downregulated <- ExpDataset[most_downregulated, 2] 
+most_downregulated
+
+# Subset the dataset to extract expression levels of the gene of interest
+gene_exp <- subset(ExpDataset, ExpDataset[,2] == "CISD3")
+
+# Extract the expression values
+gene_exp_values <- gene_exp[, -c(1:2)]
+kable(gene_exp_values, type="html", caption = "Table 7. Expression values for the most downregulated gene (CISD3)")
+
+```
+
+
+### Heatmap
+```{r, fig.cap="Figure 4. Heatmap of tophits that have a p-value < 0.05. Note the clustering of similar groups together"}
+# Subset the ExpDataset to only include rows with qlf p-value < 0.05
+subset_data <- ExpDataset[p.value < 0.05, ]
+
+# Create a heatmap matrix with subsetted data
+heatmap_matrix2 <- subset_data[, 3:ncol(subset_data)]
+rownames(heatmap_matrix2) <- subset_data$ensembl_gene_id
+colnames(heatmap_matrix2) <- colnames(subset_data[, 3:ncol(subset_data)])
+
+# Normalize the data
+heatmap_matrix2 <- t(scale(t(heatmap_matrix2)))
+
+# Create a heatmap using ComplexHeatmap
+library(ComplexHeatmap)
+ht <- Heatmap(heatmap_matrix2, name = "Differential Expression Level", 
+              col = colorRamp2(c(-3,0,3), c("blue", "white", "red")),
+              cluster_rows = FALSE, cluster_columns = TRUE, show_row_dend = FALSE,
+              show_row_names = FALSE)
+ht
+```
+As is apparent from the heatmap, the control replicates all have higher expression compared to treatement levels. Our conditions have clustered together which indicates that the condition type is the primary factor in yielding these resutls.
+
+
+
+
+## Thresholded over-representation analysis
+
+### Method
+I used gprofiler since this database is updated regularly. Moreover, there was a package associated with database (gprofiler2) that enabled me to use it directly from my R notebook.
+
+### Data Annotation
+I used the recommended annotation datas in the lecture which were GO:BP (version : releases/2022-12-04), Reactome (version : 2022-12-28) and wikipathway(version : 2022-12-10). 
+
+### Result
+I used the threshold valuse of 0.01 and set the term size to be max 200.
+For my up regulated genes there were : 406 genesets
+For my down regulated genes there were 235 genesets
+
+
+
+## Interpretation
+
+### Supprot for the paper
+Our treatment resulted in the downregulation of genes associated with hypoxia and oxygen response pathways, which are crucial for tumor cell activity and viability.
+
+### Support in the literature
+As noted in [@muz2015role], hypoxia induces activation of many genes involved in the response to oxygen pathway
+```
+
