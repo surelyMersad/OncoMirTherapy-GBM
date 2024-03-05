@@ -1,0 +1,178 @@
+---
+title: "Strategic Targeting of OncomiRs in Brain Tumor Therapy: A Gene Expression Analysis Approach"
+author: "Mersad Abbasi"
+date: "20-03-2023"
+output:
+  html_document:
+    toc: True
+    toc_depth: 3
+    df_print: paged
+bibiliography: Ref.bib
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Required Packages 
+
+```{r, warning=FALSE, message=FALSE}
+options(repos = c(CRAN = "http://cran.rstudio.com"))
+if (!requireNamespace("devtools", quietly = TRUE))
+install.packages("devtools")
+if (!requireNamespace("ComplexHeatmap", quietly = TRUE))
+install.packages("ComplexHeatmap")
+if (!requireNamespace("circlize", quietly = TRUE))
+install.packages("magick")
+if (!requireNamespace("magick", quietly = TRUE))
+install.packages("magick")
+if (!requireNamespace("gprofiler2", quietly = TRUE))
+install.packages("gprofiler2")
+if (!requireNamespace("Rcurl", quietly = TRUE))
+install.packages("Rcurl")
+if (!require("BiocManager", quietly = TRUE))
+    install.packages("BiocManager")
+
+BiocManager::install("RCy3")
+```
+
+
+```{r, warning=FALSE, message=FALSE}
+## Load Required Packages
+library(ComplexHeatmap)
+library(circlize)
+library(knitr)
+library(limma)
+library(edgeR)
+library(ggplot2)
+library(magick)
+library(gprofiler2)
+library(RCurl)
+library(RCy3)
+
+```
+
+# INTRODUCTION
+
+### Article Title:
+Anti-seed PNAs targeting multiple oncomiRs for brain tumor therapy[@wang2023anti], 
+
+### Conclusion: 
+We established that BNPs loaded with anti-seed sγPNAs targeting multiple oncomiRs are a promising approach to improve the treatment of GBM, with a potential to personalize treatment based on tumor-specific oncomiRs [@wang2023anti].
+
+### Dataset: 
+Our data set was obtained from GEO with the accession id : GSE217366. It was obtained from the article "Anti-seed PNAs targeting multiple oncomiRs for brain tumor therapy" [@wang2023anti]
+
+### Summary of previous analysis
+In part 1 of the project we cleaned, normalized and mapped our dataset to HUGO symbols. We also performed  The results of these analysis are summarized as follows : 
+                        Cleaning: (we got rid of gene duplications and defined new groups for our samples) 21344 of the initial 35741 samples remained after removing gene duplications.
+                        Normalization: (We normalized our data by TMM) No outliers were removed after normalization
+                        Mapping: (we mapped our samples gene_id that contained the ensembl id to HUGO symbol), A total of 42 genes were not mapped to HUGO symbol. The list of these genes with their expression data were displayed at the end of part 1 of the project.
+In part 2 we performed DEA and preliminary ORA. 361 genes were upregulated in the treatment group (PNA-10b+21) while 890 genes were downregulated. The most upregulated pathways included pathways associated with cell division and cell cycle. The most downregulated pathways included pathways associated with response to hypoxia. The volcano plot and heatmap summarizing our analysis is presented.
+                        
+                      
+                        
+
+```{r echo=FALSE, out.width = "50%", fig.align = "center",fig.cap="Figure 1. Heatmap of tophits that have a p-value < 0.05. Note the clustering of similar groups together"}
+knitr::include_graphics("C:/Users/mersa/Documents/BCB420/A3/Figures/heatmap.png")
+```
+
+# Non-thresholded Geneset Enrichment Analysis
+
+
+# DISCUSSION
+
+**1. Methods and Gene set.**
+1) I used GSEA [Version 4.3.2](https://www.gsea-msigdb.org/gsea/index.jsp) for the analysis. The following geneset was used : "Human_GOBP_AllPathways_no_GO_iea_April_02_2023_symbol.gmt". the geneset was downloaded manually from Badar Lab (http://download.baderlab.org/EM_Genesets/current_release/Human/symbol/). [@subramanian2005gene], [@mootha2003pgc].
+
+
+**2. Summary of enrichment results.**
+I used the following parameters for the analysis : number of permutations: 1000, No_collapse, Min size = 15, Max size =500
+
+```{r echo=FALSE, out.width = "50%", fig.align = "center",fig.cap="Figure 2. GSEA Report Summary"}
+knitr::include_graphics("C:/Users/mersa/Documents/BCB420/A3/Figures/GSEAsummary.png")
+```
+Top 5 upregulated genesets are represented below 
+
+**Figure 2. Upregulated Pathways**
+```{r echo=FALSE, out.width = "50%", fig.align = "center",fig.cap="Figure 3. Upregulated pathways after NON-thresholded analysis using GSEA"}
+knitr::include_graphics("C:/Users/mersa/Documents/BCB420/A3/Figures/POS genesets.png")
+```
+
+Top 5 downregulated genesets are represented below
+**Figure 3. Downregulated Pathways**
+```{r echo=FALSE, out.width = "50%", fig.align = "center",fig.cap="Figure 4. Downregulated pathways after NON-thresholded analysis using GSEA"}
+knitr::include_graphics("C:/Users/mersa/Documents/BCB420/A3/Figures/NEG genesets.png")
+```
+
+
+**3.Comparison to part 2**
+In part 2, we were able to independently find upregulated and downregulated pathways for our dataset using gprofiler. All of the pathways found by using gprofiler belonged to GOBP. These pathways are represented below
+```{r echo=FALSE, out.width = "50%", fig.align = "center",fig.cap="Figure 5. Top 5 Upregulated pathways after Thresholded analysis using gprofiler"}
+knitr::include_graphics("C:/Users/mersa/Documents/BCB420/A3/Figures/up.png")
+```
+```{r echo=FALSE, out.width = "50%", fig.align = "center",fig.cap="Figure 6. Top 5 Downregulated pathways after Thresholded analysis using gprofiler"}
+knitr::include_graphics("C:/Users/mersa/Documents/BCB420/A3/Figures/down.png")
+```
+
+As you can see, pathways associated with hypoxia are assigned as downregulated in both of the analysis and pathways associated with mitosis are assigned as upregulated in both of the analysis.
+The comparison between the two analysis methods is not straightforward. This is becuase the input is totally different in the analysis we performed. We set p-value as 0.01 in part 2 while using GSEA the p-value was set to 0.05 by default. The databases in GSEA and gprofiler is also different leading to differnt results.
+
+# Cytoscape Visualization
+
+In order to create the netwrok, Cytoscape v3.9.1 was used [@shannon2003cytoscape]. Parameters were set as the following : FDR q-value : 0.01, Filter genes by expression selected, similarity metric: Jaccard(50%), Overlap(50%) combined (0.375). Edge cutoff was set to : 0.375
+
+**1. Enrichment Map**
+
+There were 556 nodes (corresponding to genesets) and 7058 (corresponding to genes) in the resulting map. Thresholds used were noted earlier. 
+```{r echo=FALSE, fig.align = "center",fig.cap="Figure 7. Created Network using Cytoscape. Note that upregulated genes and dowregulated genes are clustered together"}
+knitr::include_graphics("C:/Users/mersa/Documents/BCB420/A3/Figures/Network.png")
+
+```
+**2. Annotation.**
+The following parameters were used : 
+Cluster Alogorithm : MCL Cluster
+Edge Weight Column : None
+Lable Column : GSDESCR
+Max Word per lable: 3
+Min Word occurance : 1
+Adjacent Word Bonus : 8
+
+```{r echo=FALSE, fig.align = "center",fig.cap="Figure 8. Annotated Network using AutoAnnotate. Clustered genes are represented in yellow circles. The annotation font size is proportional to the cluster size"}
+knitr::include_graphics("C:/Users/mersa/Documents/BCB420/A3/Figures/Annot.png")
+```
+**3. Figure**
+
+```{r echo=FALSE, fig.align = "center",fig.cap="Figure 9. Annotated Network using AutoAnnotate. Clustered genes are represented in yellow circles. The annotation font size is proportional to the cluster size. The legend is represented in the rightside of the figure. gene names were omitted for better visuality"}
+knitr::include_graphics("C:/Users/mersa/Documents/BCB420/A3/Figures/Pub_net.png")
+
+```
+
+
+**4. Major themes in the analysis**
+Major themes in the analysis include : mitotic cell cycle, regulation of mitotic cell cycle, ncRNA metabolic process, ncRNA process,regulation of DNA metabolic process. All these genes were down-regulated. In our model, we targetted several oncomiRs (microRNAs) with the use of anti-seed sγPNAs. These anti-seed sγPNAs were expected to improve the treatment of GBM which is a type of cancer. Major themes in our analysis was process involved in mitosis and ncRNAs. This themes are exactly what we expect to find after our treatment and they fit the model. 
+Novel Pathways : In the downregulated pathways, Animal organ morphogenesis can be seen in the theme network but it is absent in the top hits of the model.
+In the upregulted pathways, ncRNA metabolic process can be seen in the theme network but it is abent in the top hots of the model
+
+
+```{r echo=FALSE, fig.align = "center",fig.cap="Figure 10. Theme Network made using AutoAnnotate. Node sizes correspond to gene set size. Mitotic cell cycle and ncRNA process are major themes in the upregulated pathways. Animal organ morphogenesis is the major theme in the downregulated pathways"}
+knitr::include_graphics("C:/Users/mersa/Documents/BCB420/A3/Figures/collapse.png")
+```
+
+# Interpretation and detailed view of results
+
+**1. Comparision to the original paper** 
+In the original paper [@wang2023anti], the authors were investigating the effect of anti-seed sγPNAs in GBM treatment which is a type of brain tumor. The downstream effect of these anti-seed sγPNAs is to silence two specific miRNAs (microRNA10b and microRNA21). The major upregulated themes in this non-thresholded analysis were ncRNA process metabolism and mitotic cell cycle. Both of these process are altered in the experimental condition in the original paper. While there were similarities between our non-thresholded analysis and thresholded analysis, we found several pathways that were significantly upregulated in this analysis but not in the thresholded analysis (ncRNA process) and pathways that were significantly downregulated in this analysis but not in thresholded analays (Animal organ morphogenesis). This is an important piece of evidence because morphogenesis is a key biomarker gene for GBM progression.  Overall, the non-thresholded analaysis was successful in identifying important pathways we were unable to identify with the use of gprofiler in part 2. In total we managed to identified nearly all proven biomarker genes in GBM.
+
+**2. Support from literature**
+Nicola VL Serão and et al.[@serao2011cell] explore different biomarkers of GBM in their study. They found that cell cycle, morphogenesis and response to stimuli are important biomarkers of GBM progression and survivlal. Interestingly we were able to identfity all of theses themes in our analysis : cell cycle (mitotic cell cycle-thresholded and nonthresholded), morphogeneis (Animal organ morphogenesis - nonthresholded), response to stimuli (response to hypoxia-thresholded).
+
+
+**Post Analysis to main network**
+I chose brain tumor abnormalities since we are analysing expression levels in brain tumor cells. By including only the brain developmental abnormality we see that this node is connected to a lot of our process (391) both upregulated and downregulated. Which shows the altered expression of genes invlolved in brain developmental abnormality in GBM. Our drug was able to target these genes in different ways. (some were upregulated and some were downregulated)
+
+```{r echo=FALSE, fig.align = "center",fig.cap="Figure 11. Post-analysis network made by cytoscape. A single node was added to the network. Note the large number of edges connected to the added node (visualized by orange dashed lines) that are connected to both upregulated and downregulated genes"}
+knitr::include_graphics("C:/Users/mersa/Documents/BCB420/A3/Figures/postana.png")
+```
+
+
